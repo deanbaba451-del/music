@@ -71,11 +71,9 @@ async def process(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await p.download_to_drive(cov)
         has_cov = True
 
-    # ffmpeg parallel core logic
     if has_cov:
         cmd = f'ffmpeg -y -i "{ud["path"]}" -i "{cov}" -map 0:a -map 1:0 -id3v2_version 3 -metadata title="{ud["name"]}" -metadata artist="{ud["artist"]}" -codec:a libmp3lame -qscale:a 2 "{out}"'
     else:
-        # /skip durumunda kapagi temizler (-vn)
         cmd = f'ffmpeg -y -i "{ud["path"]}" -vn -metadata title="{ud["name"]}" -metadata artist="{ud["artist"]}" -codec:a libmp3lame -qscale:a 2 "{out}"'
     
     p_exec = await asyncio.create_subprocess_shell(cmd)
