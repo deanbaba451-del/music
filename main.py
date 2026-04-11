@@ -15,7 +15,6 @@ def home():
     return "bot is live", 200
 
 def run_flask():
-    # render portu 10000 veya port degiskeninden alir
     port = int(os.environ.get("PORT", 10000))
     web_app.run(host='0.0.0.0', port=port)
 
@@ -23,54 +22,52 @@ TOKEN = os.getenv("BOT_TOKEN")
 GET_NAME, GET_ARTIST, GET_COVER = range(3)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("send audio or video file")
+    await update.message.reply_text("send file")
     return GET_NAME
 
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cancel_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ud = context.user_data
-    if 'path' in ud and os.path.exists(ud['path']):
-        os.remove(ud['path'])
+    for key in ['path', 'out', 'cov']:
+        if key in ud and os.path.exists(ud[key]): os.remove(ud[key])
     context.user_data.clear()
     await update.message.reply_text("transaction canceled. /start for new")
     return ConversationHandler.END
 
 async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    file = update.message.audio or update.message.voice or update.message.video
+    file = update.message.audio or update.message.voice or update.message.video or update.message.document
     if not file: return
     
-    tid = str(uuid.uuid4())[:8]
-    ext = ".mp3" if update.message.audio or update.message.voice else ".mp4"
-    file_path = f"in_{tid}{ext}"
+    tid = str(uuid.uuid4())[:4] # daha kisa id
+    ext = ".tmp"
+    if hasattr(file, 'file_name') and file.file_name:
+        ext = os.path.splitext(file.file_name)[1]
     
+    file_path = f"{tid}{ext}"
     file_obj = await file.get_file()
     await file_obj.download_to_drive(file_path)
     
     context.user_data.update({'path': file_path, 'tid': tid})
-    await update.message.reply_text("send new song name")
+    await update.message.reply_text("send name")
     return GET_NAME
 
 async def get_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['name'] = update.message.text.lower()
-    await update.message.reply_text("send new artist name")
+    await update.message.reply_text("send artist")
     return GET_ARTIST
 
 async def get_artist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['artist'] = update.message.text.lower()
-    await update.message.reply_text("send cover photo or /skip")
+    await update.message.reply_text("send cover or /skip")
     return GET_COVER
 
 async def process(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ud = context.user_data
-    tid, cid = ud['tid'], update.message.chat_id
+    tid = ud['tid']
+    is_skip = update.message.text and "/skip" in update.message.text
     
-    # skip komutu mu gelmis kontrol et
-    is_skip = False
-    if update.message.text and "/skip" in update.message.text:
-        is_skip = True
-
-    await update.message.reply_text("processing...")
+    proc_msg = await update.message.reply_text("processing...")
     
-    out, cov = f"out_{tid}.mp3", f"cov_{tid}.jpg"
+    out, cov = f"o{tid}.mp3", f"c{tid}.jpg"
     has_cov = False
 
     if not is_skip and update.message.photo:
@@ -78,22 +75,22 @@ async def process(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await p.download_to_drive(cov)
         has_cov = True
 
+    # hizlandirilmis ffmpeg komutu
+    # -preset ultrafast ve -threads 0 maksimum hiz saglar
     if has_cov:
-        cmd = f'ffmpeg -y -i "{ud["path"]}" -i "{cov}" -map 0:a -map 1:0 -id3v2_version 3 -metadata title="{ud["name"]}" -metadata artist="{ud["artist"]}" -codec:a libmp3lame -qscale:a 2 "{out}"'
+        cmd = f'ffmpeg -y -threads 0 -i "{ud["path"]}" -i "{cov}" -map 0:a -map 1:0 -id3v2_version 3 -metadata title="{ud["name"]}" -metadata artist="{ud["artist"]}" -codec:a libmp3lame -preset ultrafast -b:a 128k "{out}"'
     else:
-        cmd = f'ffmpeg -y -i "{ud["path"]}" -vn -metadata title="{ud["name"]}" -metadata artist="{ud["artist"]}" -codec:a libmp3lame -qscale:a 2 "{out}"'
+        cmd = f'ffmpeg -y -threads 0 -i "{ud["path"]}" -vn -metadata title="{ud["name"]}" -metadata artist="{ud["artist"]}" -codec:a libmp3lame -preset ultrafast -b:a 128k "{out}"'
     
     p_exec = await asyncio.create_subprocess_shell(cmd)
     await p_exec.communicate()
 
     with open(out, 'rb') as f:
-        await update.message.reply_audio(
-            audio=f, 
-            title=ud["name"], 
-            performer=ud["artist"], 
-            caption="done. /start for new"
-        )
+        await update.message.reply_audio(audio=f, title=ud["name"], performer=ud["artist"])
     
+    await update.message.reply_text("done. /start for new")
+    
+    # aninda temizlik
     for f_p in [ud['path'], out, cov]:
         if os.path.exists(f_p): os.remove(f_p)
         
@@ -105,14 +102,14 @@ if __name__ == '__main__':
     app = ApplicationBuilder().token(TOKEN).build()
     
     conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.AUDIO | filters.VIDEO | filters.VOICE, handle_file)],
+        entry_points=[MessageHandler(filters.AUDIO | filters.VIDEO | filters.VOICE | filters.Document.ALL, handle_file)],
         states={
             GET_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
             GET_ARTIST: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_artist)],
             GET_COVER: [MessageHandler(filters.PHOTO | filters.Regex("/skip"), process)],
         },
-        fallbacks=[CommandHandler("cancel", cancel), CommandHandler("start", start)],
-        conversation_timeout=600
+        fallbacks=[CommandHandler("cancel", cancel_action), CommandHandler("start", start)],
+        conversation_timeout=300
     )
     
     app.add_handler(CommandHandler("start", start))
