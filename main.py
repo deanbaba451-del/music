@@ -15,7 +15,8 @@ def home():
     return "bot is live", 200
 
 def run_flask():
-    port = int(os.environ.get("PORT", 8080))
+    # render portu 10000 veya port degiskeninden alir
+    port = int(os.environ.get("PORT", 10000))
     web_app.run(host='0.0.0.0', port=port)
 
 TOKEN = os.getenv("BOT_TOKEN")
@@ -61,12 +62,18 @@ async def get_artist(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def process(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ud = context.user_data
     tid, cid = ud['tid'], update.message.chat_id
+    
+    # skip komutu mu gelmis kontrol et
+    is_skip = False
+    if update.message.text and "/skip" in update.message.text:
+        is_skip = True
+
     await update.message.reply_text("processing...")
     
     out, cov = f"out_{tid}.mp3", f"cov_{tid}.jpg"
     has_cov = False
 
-    if update.message.photo:
+    if not is_skip and update.message.photo:
         p = await update.message.photo[-1].get_file()
         await p.download_to_drive(cov)
         has_cov = True
@@ -102,7 +109,7 @@ if __name__ == '__main__':
         states={
             GET_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
             GET_ARTIST: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_artist)],
-            GET_COVER: [MessageHandler(filters.PHOTO | CommandHandler("skip"), process)],
+            GET_COVER: [MessageHandler(filters.PHOTO | filters.Regex("/skip"), process)],
         },
         fallbacks=[CommandHandler("cancel", cancel), CommandHandler("start", start)],
         conversation_timeout=600
