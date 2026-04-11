@@ -1,57 +1,115 @@
 import os
-import random
+import asyncio
+import logging
+import uuid
 from flask import Flask
 from threading import Thread
 from telegram import Update
-from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
+from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, CommandHandler, ConversationHandler, filters
 
-app = Flask(__name__)
+logging.basicConfig(level=logging.INFO)
+web_app = Flask(__name__)
 
-@app.route('/')
+@web_app.route('/')
 def home():
-    return "altyapi canavar gibi"
+    return "bot is live", 200
 
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
-    app.run(host='0.0.0.0', port=port)
+    web_app.run(host='0.0.0.0', port=port)
 
-TOKEN = "8702532263:AAGEaRUxZ1OvmrW1qLSgpZnNV-Aec_buJ-8"
-ALLOWED_USERS = [8321677959, 7842559876]
-DORA_ID = 7842559876
+TOKEN = os.getenv("BOT_TOKEN")
+GET_NAME, GET_ARTIST, GET_COVER = range(3)
 
-# KATRİLYONLUK DEVASA KÜFÜR MATRİSİ
-k1 = ["dora", "lan dora", "yagli dora", "pislik dora", "oglum dora", "kes sesini dora", "les dora", "saci bitli dora", "amk dorasi", "yag ficsi dora", "pasli dora", "kokusmus dora", "ahır kokulu dora", "yag tulumu dora", "it dölü dora"]
-k2 = ["o yagli saclarina yigit bosalsin", "saclarini yika amk cocugu", "o saclar ne lan yag ficisi", "yigit o saclarina dol doksun", "sacin les gibi kokuyor amk", "yigit saclarina asilsin senin", "o sac tellerin yagdan birbirine girmis amk", "sacin ahir gibi kokuyor", "yigit kafandaki yaga kaysin", "sacin vicik vicik amk", "yigit o saclarinda sörf yapsin", "sacindaki yagla yemek yapilir amk", "yigit sacina bosa gitsin", "saclarin les kumesi gibi", "yigit o saclarini dölle yikasin", "sacindan sızan yagi sikeyim", "yigit o sacini döl havuzuna cevirsin"]
-k3 = ["git banyo yap", "les herif", "yag ficsi", "pislik", "igrenc yaratik", "rezil", "amk evladi", "it soyu", "suratina sicayim", "asagilik", "midesiz", "tipsiz amk", "yag tulumu", "geber git", "kokusmus it", "lağım faresi"]
-k4 = ["amk", "lan", "serefsiz", "it", "kopek", "yavsak", "pic", "ezik", "pislik", "mikrop", "gavat", "ibne", "orospu cocugu"]
-k5 = ["yigit seni silsin", "sacini sikeyim", "o kafa ne amk", "yigit kafana bosalsin", "yaglı kafanı sikeyim", "git öl amk", "pis herif"]
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("send audio or video file")
+    return GET_NAME
 
-async def handle_logic(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.effective_user:
-        return
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    ud = context.user_data
+    if 'path' in ud and os.path.exists(ud['path']):
+        os.remove(ud['path'])
+    context.user_data.clear()
+    await update.message.reply_text("transaction canceled. /start for new")
+    return ConversationHandler.END
 
-    user_id = update.effective_user.id
-
-    # 1. MEDYA TEMIZLIGI (8321677959 ve 7842559876 için)
-    if user_id in ALLOWED_USERS:
-        if not update.message.text:
-            try:
-                await update.message.delete()
-                return 
-            except:
-                pass
-
-    # 2. DORA YAZARSA KUFUR YAĞMURU
-    if user_id == DORA_ID:
-        # 5 farklı grubun rastgele birleşimi
-        msg = f"{random.choice(k1)} {random.choice(k2)} {random.choice(k3)} {random.choice(k4)} {random.choice(k5)}".lower()
-        await update.message.reply_text(msg)
-
-if __name__ == "__main__":
-    Thread(target=run_flask).start()
+async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    file = update.message.audio or update.message.voice or update.message.video
+    if not file: return
     
-    app_bot = ApplicationBuilder().token(TOKEN).build()
-    app_bot.add_handler(MessageHandler(filters.ALL, handle_logic))
+    tid = str(uuid.uuid4())[:8]
+    ext = ".mp3" if update.message.audio or update.message.voice else ".mp4"
+    file_path = f"in_{tid}{ext}"
     
-    print("devasa havuz aktif, dora yandi.")
-    app_bot.run_polling()
+    file_obj = await file.get_file()
+    await file_obj.download_to_drive(file_path)
+    
+    context.user_data.update({'path': file_path, 'tid': tid})
+    await update.message.reply_text("send new song name")
+    return GET_NAME
+
+async def get_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['name'] = update.message.text.lower()
+    await update.message.reply_text("send new artist name")
+    return GET_ARTIST
+
+async def get_artist(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['artist'] = update.message.text.lower()
+    await update.message.reply_text("send cover photo or /skip")
+    return GET_COVER
+
+async def process(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    ud = context.user_data
+    tid, cid = ud['tid'], update.message.chat_id
+    await update.message.reply_text("processing...")
+    
+    out, cov = f"out_{tid}.mp3", f"cov_{tid}.jpg"
+    has_cov = False
+
+    if update.message.photo:
+        p = await update.message.photo[-1].get_file()
+        await p.download_to_drive(cov)
+        has_cov = True
+
+    # ffmpeg parallel core logic
+    if has_cov:
+        cmd = f'ffmpeg -y -i "{ud["path"]}" -i "{cov}" -map 0:a -map 1:0 -id3v2_version 3 -metadata title="{ud["name"]}" -metadata artist="{ud["artist"]}" -codec:a libmp3lame -qscale:a 2 "{out}"'
+    else:
+        # /skip durumunda kapagi temizler (-vn)
+        cmd = f'ffmpeg -y -i "{ud["path"]}" -vn -metadata title="{ud["name"]}" -metadata artist="{ud["artist"]}" -codec:a libmp3lame -qscale:a 2 "{out}"'
+    
+    p_exec = await asyncio.create_subprocess_shell(cmd)
+    await p_exec.communicate()
+
+    with open(out, 'rb') as f:
+        await update.message.reply_audio(
+            audio=f, 
+            title=ud["name"], 
+            performer=ud["artist"], 
+            caption="done. /start for new"
+        )
+    
+    for f_p in [ud['path'], out, cov]:
+        if os.path.exists(f_p): os.remove(f_p)
+        
+    context.user_data.clear()
+    return ConversationHandler.END
+
+if __name__ == '__main__':
+    Thread(target=run_flask, daemon=True).start()
+    app = ApplicationBuilder().token(TOKEN).build()
+    
+    conv = ConversationHandler(
+        entry_points=[MessageHandler(filters.AUDIO | filters.VIDEO | filters.VOICE, handle_file)],
+        states={
+            GET_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
+            GET_ARTIST: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_artist)],
+            GET_COVER: [MessageHandler(filters.PHOTO | CommandHandler("skip"), process)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel), CommandHandler("start", start)],
+        conversation_timeout=600
+    )
+    
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(conv)
+    app.run_polling()
