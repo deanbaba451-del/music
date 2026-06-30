@@ -9,7 +9,7 @@ import telebot
 from telebot import types
 
 # --- yapılandırma ---
-main_bot_token = "8873671833:AAE8ht6JFoznlt_XaGDUPfntNXNOn7yz1Gc"
+main_bot_token = "8873671833:AAEq9hhwJzIGFckNTZHr2JPWb7twbFVmJE8"
 core_admins = [6534222591, 8942149499]
 db_name = 'yetki.db'
 
