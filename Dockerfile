@@ -1,23 +1,22 @@
-# Resmi Python hafif imajını kullanıyoruz
 FROM python:3.10-slim
 
-# Çalışma dizinini ayarla
-WORKDIR /app
-
-# Gerekli sistem paketlerini yükle (SQLite kararlılığı için)
+# sistem kütüphanelerini güncelle
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Bağımlılık listesini kopyala ve yükle
+# çalışma dizinini ayarla
+WORKDIR /app
+
+# bağımlılıkları kopyala ve yükle
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Tüm proje kodlarını içeri aktar
+# proje dosyalarını kopyala
 COPY . .
 
-# Flask API için portu dışarı aç (Render otomatik yakalar)
+# flask portunu dışarı aç
 EXPOSE 10000
 
-# Uygulamayı başlat
-CMD ["python", "main.py"]
+# uygulamayı gunicorn ile başlat
+CMD ["gunicorn", "--bind", "0.0.0.0:10000", "main:app"]
