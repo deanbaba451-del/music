@@ -10,7 +10,7 @@ from telebot import types
 
 # --- yapılandırma ---
 main_bot_token = "8873671833:AAE8ht6JFoznlt_XaGDUPfntNXNOn7yz1Gc"
-core_admins = [6534222591]
+core_admins = [6534222591, 8942149499]
 db_name = 'yetki.db'
 
 # --- veritabanı kurulumu ---
