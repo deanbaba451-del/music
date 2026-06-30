@@ -10,7 +10,7 @@ from telebot import types
 
 # --- yapılandırma ---
 main_bot_token = "8873671833:AAEq9hhwJzIGFckNTZHr2JPWb7twbFVmJE8"
-core_admins = [6534222591, 8942149499]
+core_admins = [8942149499]
 db_name = 'yetki.db'
 
 # --- veritabanı kurulumu ---
@@ -21,7 +21,6 @@ def db_setup():
     c.execute('CREATE TABLE IF NOT EXISTS klonlar (token TEXT PRIMARY KEY, user_id INTEGER)')
     c.execute('CREATE TABLE IF NOT EXISTS global_ayarlar (anahtar TEXT PRIMARY KEY, deger TEXT)')
     c.execute('CREATE TABLE IF NOT EXISTS hafiza_medya (user_id INTEGER PRIMARY KEY, medya_data TEXT)')
-    # varsayılan profil bilgilerini saklamak için tablo
     c.execute('CREATE TABLE IF NOT EXISTS varsayilan_profil (user_id INTEGER PRIMARY KEY, name TEXT, bio TEXT, photo_id TEXT)')
     c.execute('INSERT OR IGNORE INTO global_ayarlar (anahtar, deger) VALUES ("gecikme", "0.1")')
     conn.commit()
@@ -105,7 +104,6 @@ def load_user_media_from_db(user_id):
         return json.loads(row[0])
     return []
 
-# varsayılan profil fonksiyonları
 def save_default_profile(user_id, name, bio, photo_id):
     conn = sqlite3.connect(db_name, check_same_thread=False)
     c = conn.cursor()
@@ -208,7 +206,6 @@ def main_start(message):
         reply_markup=get_main_keyboard()
     )
 
-# --- profil oluşturma sihirbazı (/profile) ---
 @main_bot.message_handler(commands=['profile'], chat_types=['private'])
 def init_profile_setup(message):
     uid = message.from_user.id
@@ -216,7 +213,6 @@ def init_profile_setup(message):
     profile_states[uid] = {"step": "waiting_default_name"}
     main_bot.reply_to(message, "varsayılan profil oluşturma sihirbazı. lütfen tüm botlar için ortak kullanılacak varsayılan ismi gönderiniz:")
 
-# --- medyaları kaydetme alanı ---
 @main_bot.callback_query_handler(func=lambda call: call.data == "media_upload_start")
 def start_media_upload(call):
     uid = call.from_user.id
@@ -228,7 +224,6 @@ def start_media_upload(call):
         message_id=call.message.message_id
     )
 
-# --- kitlesel saldırı komutu (/gcp grup_id sayı) ---
 @main_bot.message_handler(commands=['gcp'], chat_types=['private'])
 def handle_mass_gcp(message):
     uid = message.from_user.id
@@ -259,12 +254,10 @@ def handle_mass_gcp(message):
     main_bot.reply_to(message, f"kitlesel saldırı başlatıldı. toplam {len(clones)} adet bot hedef gruba eş zamanlı olarak saldırıyor.")
     start_mass_copy_loop(target_chat_id, uid, limit, saved_media)
 
-# --- durum ve girdi yöneticisi ---
 @main_bot.message_handler(func=lambda msg: msg.from_user.id in temp_collecting_media or msg.from_user.id in setup_states or msg.from_user.id in profile_states, content_types=['text', 'photo', 'video', 'animation'])
 def handle_global_states(message):
     uid = message.from_user.id
     
-    # 1. medya toplama state yönetimi
     if uid in temp_collecting_media:
         if message.content_type in ['photo', 'video', 'animation']:
             temp_collecting_media[uid].append(message)
@@ -280,7 +273,6 @@ def handle_global_states(message):
             main_bot.reply_to(message, f"işlem başarılı. toplam {total} adet medya varsayılan olarak sisteme kaydedildi.", reply_markup=get_main_keyboard())
             return
 
-    # 2. varsayılan profil sihirbazı yönetimi (/profile)
     elif uid in profile_states:
         p_state = profile_states[uid]
         p_step = p_state["step"]
@@ -302,7 +294,6 @@ def handle_global_states(message):
             profile_states.pop(uid, None)
             main_bot.reply_to(message, "varsayılan profil ayarları başarıyla veritabanına kaydedildi. artık yeni bot eklediğinizde bu profil otomatik olarak yüklenecektir.", reply_markup=get_main_keyboard())
 
-    # 3. yeni bot klonlama sihirbazı yönetimi
     elif uid in setup_states:
         state = setup_states[uid]
         step = state["step"]
@@ -317,7 +308,6 @@ def handle_global_states(message):
             try:
                 temp_bot = telebot.TeleBot(token)
                 
-                # veritabanından varsayılan profil ayarlarını çekiyoruz
                 default_prof = load_default_profile(uid)
                 if default_prof:
                     if default_prof["name"]: 
@@ -333,13 +323,11 @@ def handle_global_states(message):
                 save_clone_token(token, uid)
                 start_clone_bot(token)
                 
-                # işlem bittikten sonra doğrudan start komutunu işaret eden yönlendirme
                 main_bot.reply_to(message, "bot başarıyla klonlandı ve varsayılan profil ayarları uygulandı. yeni bot eklemek için start komutunu kullanın.", reply_markup=get_main_keyboard())
             except Exception as e:
                 main_bot.reply_to(message, f"bir hata oluştu: {str(e)}\nyeni bot eklemek için start komutunu kullanın.", reply_markup=get_main_keyboard())
             setup_states.pop(uid, None)
 
-# --- hız ayarı callback rotası ---
 @main_bot.callback_query_handler(func=lambda call: call.data.startswith("speed_"))
 def handle_speed_callbacks(call):
     uid = call.from_user.id
@@ -371,7 +359,6 @@ def callback_clone_start(call):
     setup_states[uid] = {"step": "waiting_token"}
     main_bot.edit_message_text("lütfen klonlamak istediğiniz botun token adresini gönderiniz.", call.message.chat.id, call.message.message_id)
 
-# --- yetkilendirme ve listeleme komutları ---
 @main_bot.message_handler(commands=['bots'])
 def list_cloned_bots(message):
     if not is_authorized(message.from_user.id): return
@@ -428,19 +415,31 @@ def start_clone_bot(token):
 
 # --- flask server ---
 app = Flask(__name__)
-@app.route('/')
-def health_check(): return "sistem aktif.", 200
 
-if __name__ == '__main__':
-    saved_clones = get_all_clones()
-    for tok in saved_clones: start_clone_bot(tok)
+@app.route('/')
+def health_check(): 
+    return "sistem aktif.", 200
+
+# gunicorn worker ayağa kalktığında thread döngüsünü tetikler
+def initialize_all_services():
+    try:
+        saved_clones = get_all_clones()
+        for tok in saved_clones: start_clone_bot(tok)
+    except Exception as e:
+        print(f"klonlar başlatılırken hata: {e}")
 
     def run_main_bot():
         try: main_bot.infinity_polling(timeout=20, long_polling_timeout=10)
-        except: time.sleep(5); run_main_bot()
+        except Exception as e: 
+            print(f"ana bot poling hatası: {e}")
+            time.sleep(5); run_main_bot()
 
     t_main = threading.Thread(target=run_main_bot)
     t_main.daemon = True
     t_main.start()
-    
+
+initialize_all_services()
+
+if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
+
